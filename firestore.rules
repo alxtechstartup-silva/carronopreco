@@ -1,0 +1,93 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    
+    // 1. Master Gate: Default Deny
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // --- Global Helpers ---
+    function isSignedIn() {
+      return request.auth != null;
+    }
+    
+    function isEmailVerified() {
+      return isSignedIn() && request.auth.token.email_verified == true;
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    function isOwner(uid) {
+      return isSignedIn() && request.auth.uid == uid;
+    }
+
+    // --- Entity Validations ---
+
+    function isValidVehicle(data) {
+      return data.keys().hasAll(['brand', 'model', 'price', 'ownerId']) &&
+             data.brand is string && data.brand.size() <= 100 &&
+             data.model is string && data.model.size() <= 100 &&
+             data.price is number && data.price >= 0 &&
+             data.ownerId == request.auth.uid &&
+             (!data.keys().contains('description') || (data.description is string && data.description.size() <= 5000)) &&
+             (!data.keys().contains('status') || data.status in ['active', 'sold', 'pending']);
+    }
+
+    function isValidLead(data) {
+      return data.keys().hasAll(['customerName', 'vehicleInfo']) &&
+             data.customerName is string && data.customerName.size() <= 100 &&
+             data.vehicleInfo is map;
+    }
+
+    function isValidUser(data) {
+      return data.keys().hasAll(['email', 'displayName', 'role']) &&
+             data.email is string && data.email.size() <= 255 &&
+             data.displayName is string && data.displayName.size() <= 100 &&
+             data.role in ['admin', 'lojista', 'cliente'] &&
+             (!data.keys().contains('phone') || data.phone is string) &&
+             (!data.keys().contains('avatar') || data.avatar is string) &&
+             (!data.keys().contains('whatsappWebhook') || data.whatsappWebhook is string) &&
+             (!data.keys().contains('favorites') || data.favorites is list);
+    }
+
+    // --- Collections ---
+
+    match /users/{userId} {
+      allow get: if isSignedIn();
+      allow create: if isOwner(userId) && isValidUser(incoming()) &&
+                       (incoming().role == 'cliente' || request.auth.token.email == 'alexdossantos813@gmail.com');
+      allow update: if isOwner(userId) && isValidUser(incoming()) &&
+                       (incoming().role == existing().role || request.auth.token.email == 'alexdossantos813@gmail.com') &&
+                       incoming().diff(existing()).affectedKeys().hasOnly(['displayName', 'phone', 'avatar', 'whatsappWebhook', 'favorites', 'role']);
+    }
+
+    match /vehicles/{vehicleId} {
+      allow read: if true;
+      allow create: if isSignedIn() && isValidVehicle(incoming());
+      allow update: if isSignedIn() && (isOwner(existing().ownerId) || request.auth.token.email == 'alexdossantos813@gmail.com') && isValidVehicle(incoming()) &&
+                       incoming().ownerId == existing().ownerId &&
+                       incoming().diff(existing()).affectedKeys().hasOnly(['price', 'km', 'description', 'status', 'images', 'isPremium']);
+      allow delete: if isSignedIn() && (isOwner(existing().ownerId) || request.auth.token.email == 'alexdossantos813@gmail.com');
+    }
+
+    match /leads/{leadId} {
+      allow create: if true;
+      allow read: if isSignedIn() && (resource.data.get('userId', '') == request.auth.uid);
+    }
+
+    match /analytics/{analyticId} {
+      allow create: if true;
+    }
+  }
+}

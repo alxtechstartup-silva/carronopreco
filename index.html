@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title>Carro no Preço | Marketplace Automotivo Inteligente</title>
+    <meta name="description" content="Plataforma de inteligência automotiva. Encontre o carro ideal no preço certo com IA." />
+    <!-- Enterprise PWA & Mobile Meta -->
+    <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=0" />
+    <meta name="theme-color" content="#161618" />
+    <link rel="manifest" href="/manifest.json" />
+    <link rel="apple-touch-icon" href="/logo192.png" />
+    
+    <!-- Anti-Scraping & Security Headers (Simulated via Meta) -->
+    <meta http-equiv="Content-Security-Policy" content="upgrade-insecure-requests" />
+    <meta name="robots" content="index, follow" />
+    
+    <!-- Enterprise Data Platform Analytics Simulation -->
+    <script>
+      window.CarroNoPrecoAnalytics = {
+        track: (event, data) => console.log(`[BI TRACKING]: ${event}`, data),
+        identify: (userId) => console.log(`[BI USER]: ${userId}`)
+      };
+    </script>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>
+
