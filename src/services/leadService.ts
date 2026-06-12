@@ -1,15 +1,4 @@
-import { 
-  collection, 
-  addDoc, 
-  updateDoc, 
-  doc, 
-  getDocs, 
-  query, 
-  where, 
-  orderBy, 
-  Timestamp 
-} from 'firebase/firestore';
-import { db } from '../lib/firebase';
+import { supabase } from '../lib/supabase';
 
 export interface Lead {
   id?: string;
@@ -30,15 +19,23 @@ const COLLECTION = 'leads';
 
 export const leadService = {
   async create(data: Omit<Lead, 'id' | 'createdAt' | 'status'>) {
-    // 1. Save to Firestore
-    const docRef = await addDoc(collection(db, COLLECTION), {
-      ...data,
-      status: 'new',
-      createdAt: Timestamp.now()
-    });
+    // 1. Save to Supabase
+    const { data: inserted, error } = await supabase
+      .from(COLLECTION)
+      .insert({
+        ...data,
+        status: 'new',
+        createdAt: new Date().toISOString()
+      })
+      .select('id')
+      .single();
 
-    // 2. Asynchronous AI Scoring (UI handles the refresh or we can wait)
-    // In a real app, this would be a Cloud Function hook
+    if (error) {
+      console.error('Error inserting lead to Supabase:', error);
+      throw error;
+    }
+
+    // 2. AI Scoring Pipeline
     try {
       const response = await fetch('/api/ai/score-lead', {
         method: 'POST',
@@ -51,25 +48,32 @@ export const leadService = {
       });
       const scoring = await response.json();
       
-      await updateDoc(doc(db, COLLECTION, docRef.id), {
-        score: scoring.score,
-        aiPriority: scoring.priority,
-        aiAdvice: scoring.advice
-      });
+      await supabase
+        .from(COLLECTION)
+        .update({
+          score: scoring.score,
+          aiPriority: scoring.priority,
+          aiAdvice: scoring.advice
+        })
+        .eq('id', inserted.id);
     } catch (e) {
-      console.warn("AI Scoring failed, falling back to manual", e);
+      console.warn("AI Scoring pipeline failed, remaining manual validation", e);
     }
 
-    return docRef.id;
+    return inserted.id;
   },
 
   async getDealerLeads(dealerId: string) {
-    const q = query(
-      collection(db, COLLECTION), 
-      where('dealerId', '==', dealerId),
-      orderBy('createdAt', 'desc')
-    );
-    const snapshot = await getDocs(q);
-    return snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Lead));
+    const { data, error } = await supabase
+      .from(COLLECTION)
+      .select('*')
+      .eq('dealerId', dealerId)
+      .order('createdAt', { ascending: false });
+
+    if (error) {
+      console.error('Error listing dealer leads:', error);
+      throw error;
+    }
+    return (data || []) as Lead[];
   }
 };

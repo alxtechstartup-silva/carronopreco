@@ -1,18 +1,4 @@
-import { 
-  collection, 
-  addDoc, 
-  updateDoc, 
-  deleteDoc, 
-  doc, 
-  getDocs, 
-  query, 
-  where, 
-  orderBy, 
-  limit,
-  Timestamp,
-  getDoc
-} from 'firebase/firestore';
-import { db } from '../lib/firebase';
+import { supabase } from '../lib/supabase';
 
 export interface Vehicle {
   id?: string;
@@ -36,45 +22,76 @@ export interface Vehicle {
   premiumListing: boolean;
   createdAt: any;
   updatedAt: any;
+  ownerId?: string; // Suppport both ownerId or dealerId
 }
 
 const COLLECTION = 'vehicles';
 
 export const vehicleService = {
   async getAll(filters?: any) {
-    let q = query(collection(db, COLLECTION), orderBy('createdAt', 'desc'));
+    let q = supabase.from(COLLECTION).select('*').order('createdAt', { ascending: false });
     
     if (filters?.brand) {
-      q = query(q, where('brand', '==', filters.brand));
+      q = q.eq('brand', filters.brand);
     }
     if (filters?.dealerId) {
-      q = query(q, where('dealerId', '==', filters.dealerId));
+      // Support both ownerId and dealerId filters
+      q = q.or(`dealerId.eq.${filters.dealerId},ownerId.eq.${filters.dealerId}`);
     }
     
-    const snapshot = await getDocs(q);
-    return snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Vehicle));
+    const { data, error } = await q;
+    if (error) {
+      console.error('Error fetching vehicles from Supabase:', error);
+      throw error;
+    }
+    return (data || []) as Vehicle[];
   },
 
   async getById(id: string) {
-    const docRef = doc(db, COLLECTION, id);
-    const snap = await getDoc(docRef);
-    return snap.exists() ? { id: snap.id, ...snap.data() } as Vehicle : null;
+    const { data, error } = await supabase
+      .from(COLLECTION)
+      .select('*')
+      .eq('id', id)
+      .maybeSingle();
+
+    if (error) {
+      console.error('Error fetching vehicle by ID:', error);
+      return null;
+    }
+    return data as Vehicle | null;
   },
 
   async create(data: Omit<Vehicle, 'id' | 'createdAt' | 'updatedAt'>) {
-    const docRef = await addDoc(collection(db, COLLECTION), {
-      ...data,
-      createdAt: Timestamp.now(),
-      updatedAt: Timestamp.now()
-    });
-    return docRef.id;
+    const now = new Date().toISOString();
+    const { data: inserted, error } = await supabase
+      .from(COLLECTION)
+      .insert({
+        ...data,
+        createdAt: now,
+        updatedAt: now
+      })
+      .select('id')
+      .single();
+
+    if (error) {
+      console.error('Error creating vehicle in Supabase:', error);
+      throw error;
+    }
+    return inserted.id;
   },
 
   async update(id: string, data: Partial<Vehicle>) {
-    const docRef = doc(db, COLLECTION, id);
-    await updateDoc(docRef, {
-      ...data,
-      updatedAt: Timestamp.now()
-    });
+    const { error } = await supabase
+      .from(COLLECTION)
+      .update({
+        ...data,
+        updatedAt: new Date().toISOString()
+      })
+      .eq('id', id);
+
+    if (error) {
+      console.error('Error updating vehicle in Supabase:', error);
+      throw error;
+    }
   }
 };

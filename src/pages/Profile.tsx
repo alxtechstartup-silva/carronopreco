@@ -4,11 +4,11 @@ import {
   User, Mail, Phone, Shield, ExternalLink, Trash2, 
   Sparkles, Check, Zap, CreditCard, Heart, List, 
   Settings, Key, AlertTriangle, ArrowRight, Loader2, RefreshCw,
-  Smartphone, FileText, CheckCircle2, DollarSign, Gift, QrCode
+  Smartphone, FileText, CheckCircle2, DollarSign, Gift, QrCode,
+  Calendar, Plus, Clock, ClipboardList
 } from 'lucide-react';
-import { useAuth } from '../components/providers/FirebaseProvider';
-import { db } from '../lib/firebase';
-import { collection, query, where, getDocs, updateDoc, doc, deleteDoc, writeBatch } from 'firebase/firestore';
+import { useAuth } from '../components/providers/AuthProvider';
+import { supabase } from '../lib/supabase';
 import { formatCurrency } from '../lib/utils';
 import { Link } from 'react-router-dom';
 
@@ -20,8 +20,252 @@ const MOCK_LUXURY_CARS = [
 
 export default function Profile() {
   const { user, profile, updateProfile, logout } = useAuth();
-  const [activeTab, setActiveTab] = useState<'dados' | 'anuncios' | 'favoritos' | 'whatsapp' | 'faturamento' | 'lgpd'>('dados');
+  const [activeTab, setActiveTab] = useState<'dados' | 'anuncios' | 'favoritos' | 'agenda' | 'notas' | 'whatsapp' | 'faturamento' | 'lgpd'>('dados');
   
+  // Agenda / Eventos States
+  const [events, setEvents] = useState<any[]>([]);
+  const [loadingEvents, setLoadingEvents] = useState(false);
+  const [dbFallbackEvents, setDbFallbackEvents] = useState(false);
+  
+  const [newTitle, setNewTitle] = useState('');
+  const [newDescription, setNewDescription] = useState('');
+  const [newType, setNewType] = useState('agendamento');
+  const [newDate, setNewDate] = useState('');
+  const [newTime, setNewTime] = useState('');
+
+  // Notas / Checklists States
+  const [notes, setNotes] = useState<any[]>([]);
+  const [loadingNotes, setLoadingNotes] = useState(false);
+  const [dbFallbackNotes, setDbFallbackNotes] = useState(false);
+
+  const [newNoteTitle, setNewNoteTitle] = useState('');
+  const [newNoteContent, setNewNoteContent] = useState('');
+  const [newNoteItems, setNewNoteItems] = useState<{ text: string; checked: boolean }[]>([]);
+  const [newChecklistItemText, setNewChecklistItemText] = useState('');
+
+  // Fetch Events
+  const loadEvents = async () => {
+    if (!user) return;
+    setLoadingEvents(true);
+    setDbFallbackEvents(false);
+    try {
+      const { data, error } = await supabase
+        .from('events')
+        .select('*')
+        .eq('userId', user.id)
+        .order('eventDate', { ascending: true });
+
+      if (error) throw error;
+      setEvents(data || []);
+    } catch (err) {
+      console.warn('Erro ao carregar eventos da nuvem Supabase. Usando armazenamento offline local:', err);
+      setDbFallbackEvents(true);
+      const cached = localStorage.getItem(`events_${user.id}`);
+      if (cached) {
+        setEvents(JSON.parse(cached));
+      }
+    } finally {
+      setLoadingEvents(false);
+    }
+  };
+
+  // Add Event
+  const handleAddEvent = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!user || !newTitle || !newDate) return;
+
+    const eventObj = {
+      title: newTitle,
+      description: newDescription,
+      type: newType,
+      eventDate: newDate,
+      eventTime: newTime || null,
+      userId: user.id
+    };
+
+    try {
+      const { data, error } = await supabase
+        .from('events')
+        .insert(eventObj)
+        .select();
+
+      if (error) throw error;
+      
+      // Refresh
+      await loadEvents();
+      // Reset form
+      setNewTitle('');
+      setNewDescription('');
+      setNewType('agendamento');
+      setNewDate('');
+      setNewTime('');
+    } catch (err) {
+      console.warn('Salvando evento no cache local:', err);
+      // Fallback
+      const localEvents = [...events, { ...eventObj, id: 'local-' + Date.now() }];
+      setEvents(localEvents);
+      localStorage.setItem(`events_${user.id}`, JSON.stringify(localEvents));
+      setDbFallbackEvents(true);
+
+      // Reset form
+      setNewTitle('');
+      setNewDescription('');
+      setNewType('agendamento');
+      setNewDate('');
+      setNewTime('');
+    }
+  };
+
+  // Delete Event
+  const handleDeleteEvent = async (id: string) => {
+    if (!user) return;
+    try {
+      if (id.startsWith('local-')) {
+        const localEvents = events.filter(ev => ev.id !== id);
+        setEvents(localEvents);
+        localStorage.setItem(`events_${user.id}`, JSON.stringify(localEvents));
+      } else {
+        const { error } = await supabase
+          .from('events')
+          .delete()
+          .eq('id', id);
+
+        if (error) throw error;
+        await loadEvents();
+      }
+    } catch (err) {
+      console.error(err);
+    }
+  };
+
+  // Fetch Notes
+  const loadNotes = async () => {
+    if (!user) return;
+    setLoadingNotes(true);
+    setDbFallbackNotes(false);
+    try {
+      const { data, error } = await supabase
+        .from('notes')
+        .select('*')
+        .eq('userId', user.id)
+        .order('createdAt', { ascending: false });
+
+      if (error) throw error;
+      setNotes(data || []);
+    } catch (err) {
+      console.warn('Erro ao carregar notas da nuvem Supabase. Usando armazenamento offline local:', err);
+      setDbFallbackNotes(true);
+      const cached = localStorage.getItem(`notes_${user.id}`);
+      if (cached) {
+        setNotes(JSON.parse(cached));
+      }
+    } finally {
+      setLoadingNotes(false);
+    }
+  };
+
+  // Add Note
+  const handleAddNote = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!user || !newNoteTitle) return;
+
+    const noteObj = {
+      title: newNoteTitle,
+      content: newNoteContent,
+      items: newNoteItems,
+      userId: user.id
+    };
+
+    try {
+      const { data, error } = await supabase
+        .from('notes')
+        .insert(noteObj)
+        .select();
+
+      if (error) throw error;
+      
+      await loadNotes();
+      // Reset form
+      setNewNoteTitle('');
+      setNewNoteContent('');
+      setNewNoteItems([]);
+    } catch (err) {
+      console.warn('Salvando nota no cache local:', err);
+      // Fallback
+      const localNotes = [{ ...noteObj, id: 'local-' + Date.now(), createdAt: new Date().toISOString() }, ...notes];
+      setNotes(localNotes);
+      localStorage.setItem(`notes_${user.id}`, JSON.stringify(localNotes));
+      setDbFallbackNotes(true);
+
+      // Reset form
+      setNewNoteTitle('');
+      setNewNoteContent('');
+      setNewNoteItems([]);
+    }
+  };
+
+  // Delete Note
+  const handleDeleteNote = async (id: string) => {
+    if (!user) return;
+    try {
+      if (id.startsWith('local-')) {
+        const localNotes = notes.filter(n => n.id !== id);
+        setNotes(localNotes);
+        localStorage.setItem(`notes_${user.id}`, JSON.stringify(localNotes));
+      } else {
+        const { error } = await supabase
+          .from('notes')
+          .delete()
+          .eq('id', id);
+
+        if (error) throw error;
+        await loadNotes();
+      }
+    } catch (err) {
+      console.error(err);
+    }
+  };
+
+  // Toggle checklist item within a saved note
+  const handleToggleChecklistItem = async (noteId: string, itemIndex: number) => {
+    if (!user) return;
+    const isLocal = noteId.startsWith('local-');
+    
+    // Find the note
+    const updatedNotes = notes.map(n => {
+      if (n.id === noteId) {
+        const updatedItems = n.items.map((it: any, idx: number) => {
+          if (idx === itemIndex) {
+            return { ...it, checked: !it.checked };
+          }
+          return it;
+        });
+        return { ...n, items: updatedItems };
+      }
+      return n;
+    });
+
+    setNotes(updatedNotes);
+
+    if (isLocal) {
+      localStorage.setItem(`notes_${user.id}`, JSON.stringify(updatedNotes));
+    } else {
+      try {
+        const targetNote = updatedNotes.find(n => n.id === noteId);
+        if (targetNote) {
+          const { error } = await supabase
+            .from('notes')
+            .update({ items: targetNote.items })
+            .eq('id', noteId);
+
+          if (error) throw error;
+        }
+      } catch (err) {
+        console.error('Erro ao atualizar item de checklist no Supabase:', err);
+      }
+    }
+  };
+
   // Forms state
   const [displayName, setDisplayName] = useState('');
   const [phone, setPhone] = useState('');
@@ -81,22 +325,23 @@ export default function Profile() {
     setLoadingLists(true);
     try {
       // 1. Load user's vehicles
-      const vQuery = query(collection(db, 'vehicles'), where('ownerId', '==', user.uid));
-      const vSnap = await getDocs(vQuery);
-      const vList = vSnap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-      setMyVehicles(vList);
+      const { data: vList, error: vError } = await supabase
+        .from('vehicles')
+        .select('*')
+        .eq('ownerId', user.id);
+
+      if (vError) throw vError;
+      setMyVehicles(vList || []);
 
       // 2. Load favorites
       if (profile?.favorites && profile.favorites.length > 0) {
-        const favs: any[] = [];
-        for (const favId of profile.favorites) {
-          const uQuery = query(collection(db, 'vehicles'), where('__name__', '==', favId));
-          const uSnap = await getDocs(uQuery);
-          if (!uSnap.empty) {
-            favs.push({ id: uSnap.docs[0].id, ...uSnap.docs[0].data() });
-          }
-        }
-        setFavoriteVehicles(favs);
+        const { data: favList, error: favError } = await supabase
+          .from('vehicles')
+          .select('*')
+          .in('id', profile.favorites);
+
+        if (favError) throw favError;
+        setFavoriteVehicles(favList || []);
       } else {
         setFavoriteVehicles([]);
       }
@@ -108,8 +353,14 @@ export default function Profile() {
   };
 
   useEffect(() => {
-    if (user && activeTab !== 'dados') {
-      loadUserData();
+    if (user) {
+      if (activeTab === 'agenda') {
+        loadEvents();
+      } else if (activeTab === 'notas') {
+        loadNotes();
+      } else if (activeTab !== 'dados') {
+        loadUserData();
+      }
     }
   }, [user, activeTab, profile?.favorites]);
 
@@ -134,9 +385,13 @@ export default function Profile() {
 
   const handleUpdateVehicleStatus = async (vehicleId: string, currentStatus: string) => {
     try {
-      const vRef = doc(db, 'vehicles', vehicleId);
       const newStatus = currentStatus === 'active' ? 'sold' : 'active';
-      await updateDoc(vRef, { status: newStatus });
+      const { error } = await supabase
+        .from('vehicles')
+        .update({ status: newStatus })
+        .eq('id', vehicleId);
+
+      if (error) throw error;
       loadUserData();
     } catch (err) {
       console.error(err);
@@ -146,7 +401,12 @@ export default function Profile() {
   const handleDeleteVehicle = async (vehicleId: string) => {
     if (!confirm('Deseja realmente excluir este anúncio permanentemente?')) return;
     try {
-      await deleteDoc(doc(db, 'vehicles', vehicleId));
+      const { error } = await supabase
+        .from('vehicles')
+        .delete()
+        .eq('id', vehicleId);
+
+      if (error) throw error;
       loadUserData();
     } catch (err) {
       console.error(err);
@@ -161,8 +421,12 @@ export default function Profile() {
   const completePayment = async () => {
     if (!showCheckout) return;
     try {
-      const vRef = doc(db, 'vehicles', showCheckout.id);
-      await updateDoc(vRef, { isPremium: true });
+      const { error } = await supabase
+        .from('vehicles')
+        .update({ isPremium: true })
+        .eq('id', showCheckout.id);
+
+      if (error) throw error;
       setPaymentStep('success');
       loadUserData();
     } catch (err) {
@@ -281,14 +545,22 @@ export default function Profile() {
 
     setSaving(true);
     try {
-      const batch = writeBatch(db);
-      const vQuery = query(collection(db, 'vehicles'), where('ownerId', '==', user.uid));
-      const vSnap = await getDocs(vQuery);
-      vSnap.docs.forEach(vDoc => {
-        batch.delete(doc(db, 'vehicles', vDoc.id));
-      });
-      batch.delete(doc(db, 'users', user.uid));
-      await batch.commit();
+      // 1. Delete all vehicles of this user
+      const { error: vError } = await supabase
+        .from('vehicles')
+        .delete()
+        .eq('ownerId', user.id);
+
+      if (vError) throw vError;
+
+      // 2. Delete user's profile document
+      const { error: uError } = await supabase
+        .from('users')
+        .delete()
+        .eq('id', user.id);
+
+      if (uError) throw uError;
+
       await logout();
       window.location.href = '/';
     } catch (error) {
@@ -342,6 +614,8 @@ export default function Profile() {
             { id: 'dados', label: 'Dados do Perfil', icon: User },
             { id: 'anuncios', label: 'Meus Anúncios', icon: List },
             { id: 'favoritos', label: 'Favoritos', icon: Heart },
+            { id: 'agenda', label: 'Agenda & Eventos', icon: Calendar },
+            { id: 'notas', label: 'Notas & Checklists', icon: ClipboardList },
             { id: 'whatsapp', label: 'WhatsApp SDR & API', icon: Smartphone },
             { id: 'faturamento', label: 'Faturamento & Planos', icon: CreditCard },
             { id: 'lgpd', label: 'LGPD & Privacidade', icon: Shield },
@@ -921,6 +1195,380 @@ export default function Profile() {
                 </div>
               </div>
 
+            </motion.div>
+          )}
+
+          {/* TAB: AGENDA & EVENTOS */}
+          {activeTab === 'agenda' && (
+            <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="space-y-6">
+              <div className="flex flex-col sm:flex-row justify-between sm:items-center gap-4 border-b border-white/5 pb-6">
+                <div>
+                  <h2 className="text-2xl font-bold tracking-tight text-white flex items-center gap-2">
+                    <Calendar className="text-accent" size={24} /> Agenda & Eventos Premium
+                  </h2>
+                  <p className="text-white/40 text-sm">Organize suas vistorias técnicas, acompanhamentos de clientes e compromissos.</p>
+                </div>
+                <button
+                  onClick={loadEvents}
+                  disabled={loadingEvents}
+                  className="bg-white/5 hover:bg-white/10 px-4 py-2 border border-white/10 rounded-xl text-xs font-bold transition-all text-white flex items-center gap-2"
+                >
+                  <RefreshCw size={12} className={loadingEvents ? 'animate-spin' : ''} /> Atualizar
+                </button>
+              </div>
+
+              {dbFallbackEvents && (
+                <div className="p-4 bg-amber-500/10 border border-amber-500/20 rounded-2xl flex items-start gap-3 text-xs text-amber-400">
+                  <AlertTriangle className="shrink-0 mt-0.5" size={16} />
+                  <div>
+                    <h4 className="font-bold">Armazenamento Offline Ativo</h4>
+                    <p className="mt-1 opacity-80 leading-relaxed">
+                      Sua conta está ativa, mas a tabela <strong>events</strong> não foi detectada no Supabase. Os eventos foram salvos localmente. 
+                      Para usufruir de sincronização segura em múltiplos dispositivos, crie a tabela copiando o script disponível em <strong>supabase-schema.sql</strong>.
+                    </p>
+                  </div>
+                </div>
+              )}
+
+              <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
+                {/* Form column */}
+                <form onSubmit={handleAddEvent} className="lg:col-span-12 xl:col-span-5 bg-white/2 border border-white/5 p-6 rounded-3xl space-y-4 h-fit">
+                  <h3 className="font-bold text-sm text-white uppercase tracking-wider mb-2">Novo Compromisso</h3>
+                  
+                  <div className="space-y-1">
+                    <label className="text-[10px] font-bold text-white/40 uppercase tracking-widest pl-1">Título</label>
+                    <input
+                      type="text"
+                      required
+                      placeholder="Ex: Entrega do Porsche 911"
+                      value={newTitle}
+                      onChange={(e) => setNewTitle(e.target.value)}
+                      className="w-full h-11 bg-white/5 border border-white/10 rounded-xl px-4 text-xs text-white focus:border-accent outline-none transition-all"
+                    />
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-4">
+                    <div className="space-y-1">
+                      <label className="text-[10px] font-bold text-white/40 uppercase tracking-widest pl-1">Data</label>
+                      <input
+                        type="date"
+                        required
+                        value={newDate}
+                        onChange={(e) => setNewDate(e.target.value)}
+                        className="w-full h-11 bg-white/5 border border-white/10 rounded-xl px-4 text-[11px] text-white focus:border-accent outline-none transition-all"
+                      />
+                    </div>
+                    <div className="space-y-1">
+                      <label className="text-[10px] font-bold text-white/40 uppercase tracking-widest pl-1">Horário (Opcional)</label>
+                      <input
+                        type="time"
+                        value={newTime}
+                        onChange={(e) => setNewTime(e.target.value)}
+                        className="w-full h-11 bg-white/5 border border-white/10 rounded-xl px-4 text-[11px] text-white focus:border-accent outline-none transition-all"
+                      />
+                    </div>
+                  </div>
+
+                  <div className="space-y-1">
+                    <label className="text-[10px] font-bold text-white/40 uppercase tracking-widest pl-1">Tipo de Evento</label>
+                    <select
+                      value={newType}
+                      onChange={(e) => setNewType(e.target.value)}
+                      className="w-full h-11 bg-white/5 border border-white/10 rounded-xl px-4 text-xs text-white focus:border-accent outline-none transition-all"
+                    >
+                      <option value="agendamento" className="bg-primary text-white">Agendamento de Test Drive</option>
+                      <option value="vistoria" className="bg-primary text-white">Vistoria Técnica / Mecânica</option>
+                      <option value="reuniao" className="bg-primary text-white">Reunião de Proposta / Contrato</option>
+                      <option value="outro" className="bg-primary text-white">Outros Compromissos</option>
+                    </select>
+                  </div>
+
+                  <div className="space-y-1">
+                    <label className="text-[10px] font-bold text-white/40 uppercase tracking-widest pl-1">Descrição / Detalhes</label>
+                    <textarea
+                      placeholder="Adicione observações complementares..."
+                      rows={3}
+                      value={newDescription}
+                      onChange={(e) => setNewDescription(e.target.value)}
+                      className="w-full bg-white/5 border border-white/10 rounded-xl p-4 text-xs text-white focus:border-accent outline-none transition-all resize-none"
+                    />
+                  </div>
+
+                  <button
+                    type="submit"
+                    className="w-full h-11 bg-accent hover:bg-accent/90 text-white font-bold rounded-xl text-xs uppercase tracking-widest transition-all mt-2 cursor-pointer"
+                  >
+                    Adicionar Compromisso
+                  </button>
+                </form>
+
+                {/* List column */}
+                <div className="lg:col-span-12 xl:col-span-7 space-y-4">
+                  <h3 className="font-bold text-sm text-white uppercase tracking-wider pl-1">Compromissos Agendados ({events.length})</h3>
+                  
+                  {loadingEvents ? (
+                    <div className="flex flex-col items-center justify-center py-20 text-white/40 gap-3">
+                      <Loader2 className="animate-spin text-accent" size={24} />
+                      <p className="text-xs">Sincronizando compromissos...</p>
+                    </div>
+                  ) : events.length === 0 ? (
+                    <div className="bg-white/2 border border-dashed border-white/10 p-12 rounded-[32px] text-center text-white/40 space-y-2">
+                      <Calendar className="mx-auto text-white/20" size={32} />
+                      <p className="text-xs font-bold">Nenhum agendamento encontrado</p>
+                      <p className="text-[10px] max-w-xs mx-auto text-white/30">Agende os seus próximos compromissos na coluna esquerda para não perdê-los de vista.</p>
+                    </div>
+                  ) : (
+                    <div className="space-y-3">
+                      {events.map((ev) => {
+                        return (
+                          <div key={ev.id} className="p-5 bg-white/2 border border-white/5 rounded-2xl flex justify-between items-start gap-4">
+                            <div className="space-y-1.5 min-w-0">
+                              <div className="flex items-center gap-2">
+                                <span className={`text-[8px] font-bold px-2 py-0.5 rounded-full uppercase tracking-wider ${
+                                  ev.type === 'vistoria' ? 'bg-purple-500/10 text-purple-400' :
+                                  ev.type === 'reuniao' ? 'bg-blue-500/10 text-blue-400' :
+                                  ev.type === 'agendamento' ? 'bg-green-500/10 text-green-400' :
+                                  'bg-white/10 text-white/60'
+                                }`}>
+                                  {ev.type === 'vistoria' ? 'Vistoria' :
+                                   ev.type === 'reuniao' ? 'Reunião' :
+                                   ev.type === 'agendamento' ? 'Visita/Test' :
+                                   'Compromisso'}
+                                </span>
+                                {ev.eventTime && (
+                                  <span className="text-[10px] text-white/40 font-mono flex items-center gap-1">
+                                    <Clock size={10} /> {ev.eventTime}
+                                  </span>
+                                )}
+                              </div>
+                              <h4 className="font-bold text-sm text-white truncate">{ev.title}</h4>
+                              {ev.description && <p className="text-[11px] text-white/50 leading-relaxed max-w-md">{ev.description}</p>}
+                              <p className="text-[10px] font-semibold text-accent flex items-center gap-1 font-mono">
+                                <Calendar size={10} /> {new Date(ev.eventDate + 'T12:00:00').toLocaleDateString('pt-BR')}
+                              </p>
+                            </div>
+                            <button
+                              onClick={() => handleDeleteEvent(ev.id)}
+                              className="text-white/20 hover:text-red-500 p-2 rounded-lg hover:bg-white/5 transition-all shrink-0 cursor-pointer"
+                            >
+                              <Trash2 size={14} />
+                            </button>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+              </div>
+            </motion.div>
+          )}
+
+          {/* TAB: NOTAS & CHECKLISTS */}
+          {activeTab === 'notas' && (
+            <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="space-y-6">
+              <div className="flex flex-col sm:flex-row justify-between sm:items-center gap-4 border-b border-white/5 pb-6">
+                <div>
+                  <h2 className="text-2xl font-bold tracking-tight text-white flex items-center gap-2">
+                    <ClipboardList className="text-accent" size={24} /> Notas & Checklists de Vistoria
+                  </h2>
+                  <p className="text-white/40 text-sm">Mantenha anotações cruciais de carros, tarefas de negociação ou itens de checklists técnicos salvos.</p>
+                </div>
+                <button
+                  onClick={loadNotes}
+                  disabled={loadingNotes}
+                  className="bg-white/5 hover:bg-white/10 px-4 py-2 border border-white/10 rounded-xl text-xs font-bold transition-all text-white flex items-center gap-2"
+                >
+                  <RefreshCw size={12} className={loadingNotes ? 'animate-spin' : ''} /> Atualizar
+                </button>
+              </div>
+
+              {dbFallbackNotes && (
+                <div className="p-4 bg-amber-500/10 border border-amber-500/20 rounded-2xl flex items-start gap-3 text-xs text-amber-400">
+                  <AlertTriangle className="shrink-0 mt-0.5" size={16} />
+                  <div>
+                    <h4 className="font-bold">Armazenamento Offline Ativo</h4>
+                    <p className="mt-1 opacity-80 leading-relaxed">
+                      Sua conta está ativa, mas a tabela <strong>notes</strong> não foi detectada no Supabase. Suas anotações foram gravadas localmente. 
+                      Para habilitar a segurança e backup na nuvem de forma unificada, execute o código SQL contido no arquivo <strong>supabase-schema.sql</strong>.
+                    </p>
+                  </div>
+                </div>
+              )}
+
+              <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
+                {/* Form column */}
+                <form onSubmit={handleAddNote} className="lg:col-span-12 xl:col-span-5 bg-white/2 border border-white/5 p-6 rounded-3xl space-y-4 h-fit">
+                  <h3 className="font-bold text-sm text-white uppercase tracking-wider mb-2">Criar Nota / Checklist</h3>
+                  
+                  <div className="space-y-1">
+                    <label className="text-[10px] font-bold text-white/40 uppercase tracking-widest pl-1">Título da Nota</label>
+                    <input
+                      type="text"
+                      required
+                      placeholder="Ex: Checklist Audi R8 V10"
+                      value={newNoteTitle}
+                      onChange={(e) => setNewNoteTitle(e.target.value)}
+                      className="w-full h-11 bg-white/5 border border-white/10 rounded-xl px-4 text-xs text-white focus:border-accent outline-none transition-all"
+                    />
+                  </div>
+
+                  <div className="space-y-1">
+                    <label className="text-[10px] font-bold text-white/40 uppercase tracking-widest pl-1">Anotações / Conteúdo</label>
+                    <textarea
+                      placeholder="Escreva detalhes técnicos, histórico de manutenção, propostas do cliente..."
+                      rows={3}
+                      value={newNoteContent}
+                      onChange={(e) => setNewNoteContent(e.target.value)}
+                      className="w-full bg-white/5 border border-white/10 rounded-xl p-4 text-xs text-white focus:border-accent outline-none transition-all resize-none"
+                    />
+                  </div>
+
+                  {/* Checklist Items Builder */}
+                  <div className="border-t border-white/5 pt-4 space-y-3">
+                    <label className="text-[10px] font-bold text-white/40 uppercase tracking-widest pl-1 block">Checklist de Tarefas ou Itens (Opcional)</label>
+                    
+                    <div className="flex gap-2">
+                      <input
+                        type="text"
+                        placeholder="Ex: Verificar pneus de alta performance"
+                        value={newChecklistItemText}
+                        onChange={(e) => {
+                          setNewChecklistItemText(e.target.value);
+                        }}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter') {
+                            e.preventDefault();
+                            if (!newChecklistItemText.trim()) return;
+                            setNewNoteItems([...newNoteItems, { text: newChecklistItemText.trim(), checked: false }]);
+                            setNewChecklistItemText('');
+                          }
+                        }}
+                        className="flex-grow h-10 bg-white/5 border border-white/10 rounded-xl px-4 text-xs text-white outline-none focus:border-accent transition-all"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => {
+                          if (!newChecklistItemText.trim()) return;
+                          setNewNoteItems([...newNoteItems, { text: newChecklistItemText.trim(), checked: false }]);
+                          setNewChecklistItemText('');
+                        }}
+                        className="bg-accent px-4 rounded-xl text-xs font-bold hover:bg-accent/90 text-white shrink-0 flex items-center justify-center cursor-pointer"
+                      >
+                        <Plus size={16} />
+                      </button>
+                    </div>
+
+                    {newNoteItems.length > 0 && (
+                      <div className="space-y-2 max-h-36 overflow-y-auto pr-1">
+                        {newNoteItems.map((it, idx) => (
+                          <div key={idx} className="flex justify-between items-center bg-white/2 p-2 rounded-lg border border-white/5">
+                            <span className="text-[11px] text-white/60 truncate pr-4">{it.text}</span>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setNewNoteItems(newNoteItems.filter((_, i) => i !== idx));
+                              }}
+                              className="text-red-500/60 hover:text-red-500 transition-colors shrink-0 text-xs cursor-pointer"
+                            >
+                              Remover
+                            </button>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+
+                  <button
+                    type="submit"
+                    className="w-full h-11 bg-accent hover:bg-accent/90 text-white font-bold rounded-xl text-xs uppercase tracking-widest transition-all mt-2 cursor-pointer"
+                  >
+                    Salvar Nota / Checklist
+                  </button>
+                </form>
+
+                {/* List column */}
+                <div className="lg:col-span-12 xl:col-span-7 space-y-4">
+                  <h3 className="font-bold text-sm text-white uppercase tracking-wider pl-1 font-sans">Minhas Notas e Checklists ({notes.length})</h3>
+                  
+                  {loadingNotes ? (
+                    <div className="flex flex-col items-center justify-center py-20 text-white/40 gap-3">
+                      <Loader2 className="animate-spin text-accent" size={24} />
+                      <p className="text-xs text-center">Sincronizando notas técnicas...</p>
+                    </div>
+                  ) : notes.length === 0 ? (
+                    <div className="bg-white/2 border border-dashed border-white/10 p-12 rounded-[32px] text-center text-white/40 space-y-2">
+                      <ClipboardList className="mx-auto text-white/20" size={32} />
+                      <p className="text-xs font-bold">Nenhuma nota ou checklist cadastrado</p>
+                      <p className="text-[10px] max-w-xs mx-auto text-white/30">Crie listas para vistorias técnicas de veículos ou relatórios rápidos para controle de negócios.</p>
+                    </div>
+                  ) : (
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                      {notes.map((note) => {
+                        const itemsList = note.items || [];
+                        const checkedCount = itemsList.filter((it: any) => it.checked).length;
+                        const progressPercent = itemsList.length > 0 ? Math.round((checkedCount / itemsList.length) * 100) : 0;
+                        
+                        return (
+                          <div key={note.id} className="p-5 bg-white/2 border border-white/5 rounded-2xl flex flex-col justify-between space-y-4 h-full relative group">
+                            <div className="space-y-2">
+                              <div className="flex justify-between items-start gap-3">
+                                <h4 className="font-bold text-sm text-white leading-tight pr-6">{note.title}</h4>
+                                <button
+                                  onClick={() => handleDeleteNote(note.id)}
+                                  className="text-white/20 hover:text-red-500 absolute top-4 right-4 p-1 rounded hover:bg-white/5 transition-all shrink-0 cursor-pointer"
+                                >
+                                  <Trash2 size={12} />
+                                </button>
+                              </div>
+                              {note.content && <p className="text-xs text-white/60 leading-relaxed whitespace-pre-wrap">{note.content}</p>}
+                            </div>
+
+                            {itemsList.length > 0 && (
+                              <div className="pt-2 border-t border-white/5 space-y-2">
+                                <div className="flex justify-between items-center text-[9px] uppercase tracking-wider font-bold">
+                                  <span className="text-white/40">Checklist ({checkedCount}/{itemsList.length})</span>
+                                  <span className="text-accent">{progressPercent}%</span>
+                                </div>
+                                <div className="w-full bg-white/5 h-1.5 rounded-full overflow-hidden">
+                                  <div className="bg-accent h-full transition-all duration-300" style={{ width: `${progressPercent}%` }} />
+                                </div>
+
+                                <div className="space-y-1 max-h-40 overflow-y-auto mt-2">
+                                  {itemsList.map((it: any, idx: number) => (
+                                    <button
+                                      key={idx}
+                                      type="button"
+                                      onClick={() => handleToggleChecklistItem(note.id, idx)}
+                                      className="w-full flex items-start gap-2 bg-white/1 hover:bg-white/3 p-2 rounded-lg text-left transition-all border border-white/2 cursor-pointer"
+                                    >
+                                      <span className={`shrink-0 mt-0.5 w-3.5 h-3.5 border rounded flex items-center justify-center transition-all ${
+                                        it.checked ? 'bg-accent/20 border-accent text-accent' : 'border-white/15'
+                                      }`}>
+                                        {it.checked && <Check size={8} className="stroke-[3]" />}
+                                      </span>
+                                      <span className={`text-[11px] leading-tight select-none truncate ${
+                                        it.checked ? 'text-white/40 line-through' : 'text-white/70'
+                                      }`}>
+                                        {it.text}
+                                      </span>
+                                    </button>
+                                  ))}
+                                </div>
+                              </div>
+                            )}
+
+                            {note.createdAt && (
+                              <p className="text-[9px] text-white/30 font-mono self-end pt-1">
+                                {new Date(note.createdAt).toLocaleDateString('pt-BR')} {new Date(note.createdAt).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}
+                              </p>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+              </div>
             </motion.div>
           )}
 

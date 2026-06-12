@@ -2,8 +2,7 @@ import { useState, useEffect } from 'react';
 import { motion } from 'motion/react';
 import { Search, ChevronRight, Zap, Car, ArrowRight, Loader2 } from 'lucide-react';
 import { Link } from 'react-router-dom';
-import { collection, query, where, limit, getDocs } from 'firebase/firestore';
-import { db } from '../lib/firebase';
+import { supabase } from '../lib/supabase';
 import { formatCurrency } from '../lib/utils';
 import SEO from '../components/common/SEO';
 import SearchIndex from '../components/layout/SearchIndex';
@@ -15,14 +14,15 @@ export default function Home() {
   useEffect(() => {
     const fetchFeatured = async () => {
       try {
-        const q = query(
-          collection(db, 'vehicles'),
-          where('status', '==', 'active'),
-          limit(3)
-        );
-        const snapshot = await getDocs(q);
-        const data = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-        setFeatured(data);
+        const { data, error } = await supabase
+          .from('vehicles')
+          .select('*')
+          .eq('status', 'active')
+          .limit(3)
+          .order('createdAt', { ascending: false });
+
+        if (error) throw error;
+        setFeatured(data || []);
       } catch (error) {
         console.error("Erro ao carregar destaques:", error);
       } finally {

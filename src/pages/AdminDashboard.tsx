@@ -5,14 +5,13 @@ import {
   Plus, Search, TrendingUp, AlertCircle,
   Clock, Filter, Download, Target, Loader2, Check, X, ShieldAlert, Sparkles, Zap
 } from 'lucide-react';
-import { collection, query, orderBy, onSnapshot, where, doc, updateDoc, deleteDoc } from 'firebase/firestore';
+import { supabase } from '../lib/supabase';
 import { formatCurrency, cn } from '../lib/utils';
 import { 
   ResponsiveContainer, AreaChart, Area, 
   XAxis, YAxis, CartesianGrid, Tooltip 
 } from 'recharts';
-import { useAuth } from '../components/providers/FirebaseProvider';
-import { db } from '../lib/firebase';
+import { useAuth } from '../components/providers/AuthProvider';
 
 const analyticsData = [
   { name: 'Seg', leads: 4, views: 240 },
@@ -34,44 +33,56 @@ export default function AdminDashboard() {
   useEffect(() => {
     if (!user) return;
 
-    // Load leads
-    const qLeads = query(
-      collection(db, 'leads'), 
-      orderBy('createdAt', 'desc')
-    );
-    const unsubscribeLeads = onSnapshot(qLeads, (snapshot) => {
-      const data = snapshot.docs.map(doc => ({
-        id: doc.id,
-        ...doc.data()
-      }));
-      setLeads(data);
-    });
+    const fetchLeadsAndVehicles = async () => {
+      try {
+        const { data: leadsData, error: leadsError } = await supabase
+          .from('leads')
+          .select('*')
+          .order('createdAt', { ascending: false });
 
-    // Load vehicles for moderation
-    const qVehicles = query(
-      collection(db, 'vehicles'),
-      orderBy('createdAt', 'desc')
-    );
-    const unsubscribeVehicles = onSnapshot(qVehicles, (snapshot) => {
-      const data = snapshot.docs.map(doc => ({
-        id: doc.id,
-        ...doc.data()
-      }));
-      setVehicles(data);
-      setLoading(false);
-    }, () => {
-      setLoading(false);
-    });
+        if (leadsError) throw leadsError;
+        setLeads(leadsData || []);
+
+        const { data: vehiclesData, error: vehiclesError } = await supabase
+          .from('vehicles')
+          .select('*')
+          .order('createdAt', { ascending: false });
+
+        if (vehiclesError) throw vehiclesError;
+        setVehicles(vehiclesData || []);
+      } catch (error) {
+        console.error("Erro ao carregar dados do admin dashboard no Supabase:", error);
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    fetchLeadsAndVehicles();
+
+    // Set up Realtime changes
+    const leadsChannel = supabase
+      .channel('admin-leads')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'leads' }, () => {
+        fetchLeadsAndVehicles();
+      })
+      .subscribe();
+
+    const vehiclesChannel = supabase
+      .channel('admin-vehicles')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'vehicles' }, () => {
+        fetchLeadsAndVehicles();
+      })
+      .subscribe();
 
     return () => {
-      unsubscribeLeads();
-      unsubscribeVehicles();
+      supabase.removeChannel(leadsChannel);
+      supabase.removeChannel(vehiclesChannel);
     };
   }, [user]);
 
   const handleApprove = async (id: string) => {
     try {
-      await updateDoc(doc(db, 'vehicles', id), { status: 'active' });
+      await supabase.from('vehicles').update({ status: 'active' }).eq('id', id);
     } catch (e) {
       console.error(e);
     }
@@ -79,7 +90,7 @@ export default function AdminDashboard() {
 
   const handleReject = async (id: string) => {
     try {
-      await updateDoc(doc(db, 'vehicles', id), { status: 'pending' });
+      await supabase.from('vehicles').update({ status: 'pending' }).eq('id', id);
     } catch (e) {
       console.error(e);
     }

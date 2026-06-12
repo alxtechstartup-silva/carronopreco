@@ -1,19 +1,36 @@
 import { useState, useEffect } from 'react';
-import { db, auth } from '../lib/firebase';
-import { doc, getDoc, setDoc, updateDoc, arrayUnion, arrayRemove } from 'firebase/firestore';
+import { supabase } from '../lib/supabase';
 
 export function useFavorites() {
   const [favorites, setFavorites] = useState<string[]>([]);
-  const user = auth.currentUser;
+  const [user, setUser] = useState<any>(null);
+
+  useEffect(() => {
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      setUser(session?.user ?? null);
+    });
+
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+      setUser(session?.user ?? null);
+    });
+
+    return () => {
+      subscription.unsubscribe();
+    };
+  }, []);
 
   useEffect(() => {
     if (user) {
-      const docRef = doc(db, 'users', user.uid);
-      getDoc(docRef).then(snap => {
-        if (snap.exists()) {
-          setFavorites(snap.data().favorites || []);
-        }
-      });
+      supabase
+        .from('users')
+        .select('favorites')
+        .eq('id', user.id)
+        .single()
+        .then(({ data, error }) => {
+          if (!error && data) {
+            setFavorites(data.favorites || []);
+          }
+        });
     } else {
       const local = localStorage.getItem('favorites');
       if (local) setFavorites(JSON.parse(local));
@@ -33,8 +50,10 @@ export function useFavorites() {
     setFavorites(newFavs);
 
     if (user) {
-      const docRef = doc(db, 'users', user.uid);
-      await setDoc(docRef, { favorites: newFavs }, { merge: true });
+      await supabase
+        .from('users')
+        .update({ favorites: newFavs })
+        .eq('id', user.id);
     } else {
       localStorage.setItem('favorites', JSON.stringify(newFavs));
     }

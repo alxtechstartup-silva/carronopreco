@@ -1,16 +1,15 @@
 import { useLocation } from 'react-router-dom';
 import { useEffect } from 'react';
-import { collection, addDoc } from 'firebase/firestore';
-import { db } from '../lib/firebase';
+import { supabase } from '../lib/supabase';
 
 export function useAnalytics() {
   const location = useLocation();
 
   useEffect(() => {
-    // Analytics Real via Firestore
+    // Analytics Real via Supabase
     const trackPageView = async () => {
       try {
-        await addDoc(collection(db, 'analytics'), {
+        await supabase.from('analytics').insert({
           event: 'PAGE_VIEW',
           path: location.pathname,
           timestamp: new Date().toISOString(),
@@ -18,7 +17,7 @@ export function useAnalytics() {
           userAgent: navigator.userAgent
         });
       } catch (error) {
-        console.error('Erro ao registrar analytics:', error);
+        console.error('Erro ao registrar analytics no Supabase:', error);
       }
     };
 

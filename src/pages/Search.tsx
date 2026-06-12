@@ -4,8 +4,7 @@ import {
   Search as SearchIcon, Filter, SlidersHorizontal, ChevronDown, 
   LayoutGrid, List, Loader2, Sparkles, CheckCircle, HelpCircle, AlertCircle, Zap
 } from 'lucide-react';
-import { collection, query, orderBy, onSnapshot } from 'firebase/firestore';
-import { db } from '../lib/firebase';
+import { supabase } from '../lib/supabase';
 import { formatCurrency, cn } from '../lib/utils';
 import { motion } from 'motion/react';
 
@@ -32,22 +31,40 @@ export default function Search() {
   const [typoMatched, setTypoMatched] = useState<string | null>(null);
 
   useEffect(() => {
-    const q = query(collection(db, 'vehicles'), orderBy('createdAt', 'desc'));
-    
-    const unsubscribe = onSnapshot(q, (snapshot) => {
-      const data = snapshot.docs.map(doc => ({
-        id: doc.id,
-        ...doc.data()
-      }));
-      setVehicles(data);
-      setFilteredVehicles(data);
-      setLoading(false);
-    }, (error) => {
-      console.error("Erro ao buscar veículos:", error);
-      setLoading(false);
-    });
+    const fetchVehicles = async () => {
+      try {
+        const { data, error } = await supabase
+          .from('vehicles')
+          .select('*')
+          .order('createdAt', { ascending: false });
 
-    return () => unsubscribe();
+        if (error) throw error;
+        setVehicles(data || []);
+        setFilteredVehicles(data || []);
+      } catch (error) {
+        console.error("Erro ao buscar veículos no Supabase:", error);
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    fetchVehicles();
+
+    // Listen for changes in database
+    const channel = supabase
+      .channel('schema-db-changes')
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'vehicles' },
+        () => {
+          fetchVehicles();
+        }
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
   }, []);
 
   // Filter application logic

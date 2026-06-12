@@ -8,9 +8,8 @@ import {
   Search, ChevronRight
 } from 'lucide-react';
 import { formatCurrency, formatKm } from '../lib/utils';
-import { doc, getDoc } from 'firebase/firestore';
+import { vehicleService } from '../services/vehicleService';
 import { leadService } from '../services/leadService';
-import { db } from '../lib/firebase';
 
 export default function VehicleDetails() {
   const { id } = useParams();
@@ -25,10 +24,9 @@ export default function VehicleDetails() {
     const fetchVehicle = async () => {
       if (!id) return;
       try {
-        const docRef = doc(db, 'vehicles', id);
-        const docSnap = await getDoc(docRef);
-        if (docSnap.exists()) {
-          setVehicle({ id: docSnap.id, ...docSnap.data() });
+        const car = await vehicleService.getById(id);
+        if (car) {
+          setVehicle(car);
         }
       } catch (error) {
         console.error("Erro ao carregar veículo:", error);

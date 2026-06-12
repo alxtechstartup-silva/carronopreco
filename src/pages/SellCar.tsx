@@ -4,11 +4,10 @@ import {
   Car, Camera, FileText, CheckCircle, 
   ChevronRight, ChevronLeft, Sparkles, Loader2 
 } from 'lucide-react';
-import { collection, addDoc } from 'firebase/firestore';
+import { supabase } from '../lib/supabase';
 import { fraudService } from '../services/fraudService';
-import { useAuth } from '../components/providers/FirebaseProvider';
-import { db } from '../lib/firebase';
-import { handleFirestoreError, OperationType } from '../lib/firestore-errors';
+import { useAuth } from '../components/providers/AuthProvider';
+import { handleSupabaseError, OperationType } from '../lib/supabase-errors';
 import ImageUpload from '../components/common/ImageUpload';
 
 export default function SellCar() {
@@ -42,10 +41,15 @@ export default function SellCar() {
         return;
       }
 
-      await addDoc(collection(db, 'vehicles'), {
-        ...formData,
+      const { error } = await supabase.from('vehicles').insert({
+        brand: formData.brand,
+        model: formData.model,
+        year: Number(formData.year),
+        km: Number(formData.km),
         price: Number(formData.price.replace(/\D/g, '')),
-        ownerId: user.uid,
+        description: formData.description,
+        ownerId: user.id,
+        dealerId: user.id, // compatibility
         status: 'active',
         createdAt: new Date().toISOString(),
         images: uploadedImages.length > 0 ? uploadedImages : [
@@ -53,9 +57,11 @@ export default function SellCar() {
         ]
       });
 
+      if (error) throw error;
+
       setStep(4);
     } catch (error) {
-      handleFirestoreError(error, OperationType.CREATE, 'vehicles');
+      handleSupabaseError(error, OperationType.CREATE, 'vehicles');
     } finally {
       setLoading(false);
     }

@@ -2,9 +2,8 @@ import { Link } from 'react-router-dom';
 import { Car, Search as SearchIcon, User, Menu, LogOut, Bell, Shield, Heart, HelpCircle } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { useState, useEffect } from 'react';
-import { useAuth } from '../providers/FirebaseProvider';
-import { collection, query, where, onSnapshot, getDocs, updateDoc, doc } from 'firebase/firestore';
-import { db } from '../../lib/firebase';
+import { useAuth } from '../providers/AuthProvider';
+import { supabase } from '../../lib/supabase';
 
 export default function Navbar() {
   const { user, profile, login, logout } = useAuth();
@@ -24,29 +23,45 @@ export default function Navbar() {
       { id: '2', title: 'Preço FIPE Integrado', type: 'info', message: 'Consulte os gráficos históricos e compare antes de fechar propostas.', date: '1d atrás', read: true }
     ];
 
-    const q = query(collection(db, 'notifications'), where('userId', '==', user.uid));
-    const unsubscribe = onSnapshot(q, (snapshot) => {
-      const dbAlerts = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-      setNotifications(dbAlerts.length > 0 ? dbAlerts : defaultAlerts);
-    }, () => {
-      setNotifications(defaultAlerts);
-    });
+    const fetchNotifications = async () => {
+      try {
+        const { data, error } = await supabase
+          .from('notifications')
+          .select('*')
+          .eq('userId', user.id);
 
-    return () => unsubscribe();
+        if (error) throw error;
+        setNotifications(data && data.length > 0 ? data : defaultAlerts);
+      } catch (err) {
+        setNotifications(defaultAlerts);
+      }
+    };
+
+    fetchNotifications();
+
+    const channel = supabase
+      .channel('schema-notifications')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'notifications' }, () => {
+        fetchNotifications();
+      })
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
   }, [user]);
 
   const unreadCount = notifications.filter(n => !n.read).length;
 
   const markAllAsRead = async () => {
     setNotifications(prev => prev.map(n => ({ ...n, read: true })));
-    // Sync to Firestore if there are DB-stored alerts
     if (!user) return;
     try {
-      const q = query(collection(db, 'notifications'), where('userId', '==', user.uid), where('read', '==', false));
-      const snap = await getDocs(q);
-      snap.docs.forEach(async (d) => {
-        await updateDoc(doc(db, 'notifications', d.id), { read: true });
-      });
+      await supabase
+        .from('notifications')
+        .update({ read: true })
+        .eq('userId', user.id)
+        .eq('read', false);
     } catch (e) {
       console.error(e);
     }
